@@ -175,22 +175,6 @@ namespace SDiff
             vic = new VerifyImplCleanup();
             vic.Visit(prog);
 
-
-            // JATIN_NOTE: This code is a hack to fix a boogie AST bug. The code dumps the program to a file,
-            // and reparses the program. This is a temporary fix until the bug is fixed in Boogie.
-            // The bug is introduced in the method call BuildProgramDictionary(newProg.TopLevelDeclarations.ToList())
-            // by RunVerificationTask (the preceding method).
-            // I suspectBuildProgramDictionary changes the TopLevelDeclarations, even though it only reads them!
-            // There is a weird boogie behavior where reading TopLevelDeclarations changes the AST.
-            // This is a hack to undo those changes.
-            var engine = new ExecutionEngine(BoogieUtils.BoogieOptions, new VerificationResultCache(),
-                    CustomStackSizePoolTaskScheduler.Create(16 * 1024 * 1024, 1));
-            var tmpFileName = "bug_resolver.bpl";
-            Util.DumpBplAST(prog, tmpFileName);
-            prog = BoogieUtils.ParseProgram(tmpFileName);
-            Microsoft.Boogie.CivlTypeChecker typeChecker;
-            engine.ResolveAndTypecheck(prog, tmpFileName, out typeChecker);
-
             cex = null;
 
             if (impl == null)
@@ -200,7 +184,8 @@ namespace SDiff
             }
 
             //Log.Out(Log.Verifier, "Verifying implementation " + impl.Name);
-
+            var engine = new ExecutionEngine(BoogieUtils.BoogieOptions, new VerificationResultCache(),
+                                        CustomStackSizePoolTaskScheduler.Create(16 * 1024 * 1024, 1));
             List<Counterexample> errors;
             VerificationResult sdoutcome = VerificationResult.Unknown;
             List<VerificationRunResult> vcResults;
@@ -921,13 +906,29 @@ namespace SDiff
 
                 newEq = vt.Eq;
                 newProg = prog;
+                newDict = SDiff.Boogie.Process.BuildProgramDictionary(newProg.TopLevelDeclarations.ToList());
+                newEq = (Implementation)newDict.Get(vt.Eq.Name + "$IMPL");
+
+                // JATIN_NOTE: This code is a hack to fix a boogie AST bug. The code dumps the program to a file,
+                // and reparses the program. This is a temporary fix until the bug is fixed in Boogie.
+                // The bug is introduced in the method call BuildProgramDictionary(newProg.TopLevelDeclarations.ToList())
+                // by RunVerificationTask (the preceding method).
+                // I suspectBuildProgramDictionary changes the TopLevelDeclarations, even though it only reads them!
+                // There is a weird boogie behavior where reading TopLevelDeclarations changes the AST.
+                // This is a hack to undo those changes.
+                var engine = new ExecutionEngine(BoogieUtils.BoogieOptions, new VerificationResultCache(),
+                        CustomStackSizePoolTaskScheduler.Create(16 * 1024 * 1024, 1));
+                var tmpFileName = "bug_resolver.bpl";
+                Util.DumpBplAST(prog, tmpFileName);
+                prog = BoogieUtils.ParseProgram(tmpFileName);
+                Microsoft.Boogie.CivlTypeChecker typeChecker;
+                PipelineOutcome outcome2 = engine.ResolveAndTypecheck(prog, tmpFileName, out typeChecker);
+                if (outcome2 != PipelineOutcome.ResolvedAndTypeChecked) {
+                    Log.Out(Log.Verifier, "BIG ERROR");
+                }
 
                 var vcgen = InitializeVC(newProg);
                 //SDiff.Boogie.Process.ResolveAndTypeCheck(newProg, "");
-                newDict = SDiff.Boogie.Process.BuildProgramDictionary(newProg.TopLevelDeclarations.ToList());
-
-                //RS: Uncomment this
-                newEq = (Implementation)newDict.Get(vt.Eq.Name + "$IMPL");
 
                 vt.Result = VerifyImplementation(vcgen, newEq, newProg, out SErrors);
                 vt.Counterexamples = SErrors;
